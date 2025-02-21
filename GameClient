@@ -1,0 +1,102 @@
+import java.io.*;
+import java.net.*;
+import java.util.Scanner;
+
+public class GameClient {
+    private Socket clientSocket;
+    private PrintWriter out;
+    private BufferedReader in;
+    private Scanner scanner;
+
+    public void startConnection(String ip, int port) {
+        try {
+            clientSocket = new Socket(ip, port);
+            out = new PrintWriter(clientSocket.getOutputStream(), true);
+            in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            scanner = new Scanner(System.in);
+
+            new Thread(() -> {
+                try {
+                    String fromServer;
+                    while ((fromServer = in.readLine()) != null) {
+                        if (fromServer.startsWith("CONNECTED_PLAYERS:")) {
+                            String[] players = fromServer.substring(18).split(",");
+                            System.out.println("Connected players: " + String.join(", ", players));
+                        } else if (fromServer.startsWith("PLAY_ROOM:")) {
+                            String[] players = fromServer.substring(10).split(",");
+                            System.out.println("Players in playroom: " + String.join(", ", players));
+                        } else if (fromServer.equals("GAME_STARTED")) {
+                            System.out.println("Game started!");
+                        } else if (fromServer.startsWith("Do you want to join the playroom?")) {
+                            System.out.println(fromServer);
+                            String response = scanner.nextLine();
+                            out.println(response);
+                        } else if (fromServer.equals("You have left the playroom.")) {
+                            System.out.println(fromServer);
+                        } else if (fromServer.equals("You have disconnected from the server.")) {
+                            System.out.println(fromServer);
+                        } else if (fromServer.startsWith("Current players in the playroom:")) {
+                            System.out.println(fromServer);
+                        }
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void joinGame(String playerName) {
+        out.println("JOIN:" + playerName);
+    }
+
+    public void leaveRoom() {
+        out.println("LEAVE_ROOM");
+    }
+
+    public void leaveGame() {
+        out.println("LEAVE");
+    }
+
+    public void showPlayers() {
+        out.println("SHOW_PLAYERS");
+    }
+
+    public void stopConnection() {
+        try {
+            in.close();
+            out.close();
+            clientSocket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        GameClient client = new GameClient();
+        client.startConnection("127.0.0.1", 12345);
+
+        Scanner scanner = new Scanner(System.in);
+        System.out.print("Enter your player name: ");
+        String playerName = scanner.nextLine();
+        client.joinGame(playerName);
+
+        // Simulate player interaction
+        System.out.println("Type 'leave room' to leave the playroom, 'show players' to see the current players, or 'leave' to disconnect from the server.");
+        while (true) {
+            String input = scanner.nextLine();
+            if (input.equalsIgnoreCase("leave room")) {
+                client.leaveRoom();
+            } else if (input.equalsIgnoreCase("show players")) {
+                client.showPlayers();
+            } else if (input.equalsIgnoreCase("leave")) {
+                client.leaveGame();
+                break;
+            }
+        }
+
+        client.stopConnection();
+    }
+}
