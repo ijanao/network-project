@@ -1,0 +1,190 @@
+import java.io.*;
+import java.net.*;
+import java.util.*;
+
+public class GameServer {
+    private static final int MAX_PLAYERS_PER_ROOM = 4;
+    private static final int GAME_START_DELAY = 30000; // 30 seconds
+
+    private ServerSocket serverSocket;
+    private List<ClientHandler> clients = new ArrayList<>();
+    private LinkedList<String> connectedPlayers = new LinkedList<>(); // List of all connected players
+    private List<String> playRoom = new ArrayList<>(); // List of players in the playroom
+    private Timer gameStartTimer;
+
+    public GameServer(int port) {
+        try {
+            serverSocket = new ServerSocket(port);
+            System.out.println("Server started on port " + port);
+
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                System.out.println("New client connected: " + clientSocket);
+
+                ClientHandler clientHandler = new ClientHandler(clientSocket, this);
+                clients.add(clientHandler);
+                new Thread(clientHandler).start();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public synchronized void addToConnectedPlayers(String playerName) {
+        connectedPlayers.add(playerName);
+        broadcastConnectedPlayers();
+    }
+
+    public synchronized void removeFromConnectedPlayers(String playerName) {
+        connectedPlayers.remove(playerName);
+        broadcastConnectedPlayers();
+    }
+
+    public synchronized void addToPlayRoom(String playerName) {
+        if (playRoom.size() < MAX_PLAYERS_PER_ROOM) {
+            playRoom.add(playerName);
+            broadcastPlayRoom();
+
+            // Send the current playroom list to the newly joined player
+            for (ClientHandler client : clients) {
+                if (client.getPlayerName().equals(playerName)) {
+                    client.sendMessage("PLAY_ROOM:" + String.join(",", playRoom));
+                    break;
+                }
+            }
+
+            if (playRoom.size() == 2) {
+                startGameTimer();
+            } else if (playRoom.size() == MAX_PLAYERS_PER_ROOM) {
+                startGame();
+            }
+        }
+    }
+
+    public synchronized void removeFromPlayRoom(String playerName) {
+        if (playRoom.remove(playerName)) {
+            broadcastPlayRoom();
+
+            // Cancel the timer if the number of players drops below 2
+            if (playRoom.size() < 2 && gameStartTimer != null) {
+                gameStartTimer.cancel();
+                gameStartTimer = null;
+            }
+        }
+    }
+
+    private void startGameTimer() {
+        if (gameStartTimer != null) {
+            gameStartTimer.cancel();
+        }
+
+        gameStartTimer = new Timer();
+        gameStartTimer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                startGame();
+            }
+        }, GAME_START_DELAY);
+    }
+
+    private void startGame() {
+        if (playRoom.size() >= 2) {
+            broadcastGameStart();
+            playRoom.clear();
+        }
+    }
+
+    public synchronized void broadcastConnectedPlayers() {
+        String message = "CONNECTED_PLAYERS:" + String.join(",", connectedPlayers);
+        for (ClientHandler client : clients) {
+            client.sendMessage(message);
+        }
+    }
+
+    public synchronized void broadcastPlayRoom() {
+        String message = "PLAY_ROOM:" + String.join(",", playRoom);
+        for (ClientHandler client : clients) {
+            client.sendMessage(message);
+        }
+    }
+
+    public synchronized void broadcastGameStart() {
+        String message = "GAME_STARTED";
+        for (ClientHandler client : clients) {
+            client.sendMessage(message);
+        }
+    }
+
+    public List<String> getPlayRoom() {
+        return playRoom;
+    }
+
+    public static void main(String[] args) {
+        new GameServer(12345);
+    }
+}
+
+class ClientHandler implements Runnable {
+    private Socket clientSocket;
+    private GameServer server;
+    private PrintWriter out;
+    private BufferedReader in;
+    private String playerName;
+
+    public ClientHandler(Socket socket, GameServer server) {
+        this.clientSocket = socket;
+        this.server = server;
+        try {
+            out = new PrintWriter(clientSocket.getOutputStream(), true);
+            in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void run() {
+        try {
+            String inputLine;
+            while ((inputLine = in.readLine()) != null) {
+                if (inputLine.startsWith("JOIN:")) {
+                    playerName = inputLine.substring(5);
+                    server.addToConnectedPlayers(playerName);
+                    out.println("Do you want to join the playroom? (yes/no)");
+                } else if (inputLine.equalsIgnoreCase("yes")) {
+                    server.addToPlayRoom(playerName);
+                } else if (inputLine.equalsIgnoreCase("no")) {
+                    out.println("You are not added to the playroom.");
+                } else if (inputLine.equals("LEAVE_ROOM")) {
+                    server.removeFromPlayRoom(playerName);
+                    out.println("You have left the playroom.");
+                } else if (inputLine.equals("LEAVE")) {
+                    server.removeFromConnectedPlayers(playerName);
+                    server.removeFromPlayRoom(playerName);
+                    out.println("You have disconnected from the server.");
+                } else if (inputLine.equals("SHOW_PLAYERS")) {
+                    List<String> playRoom = server.getPlayRoom();
+                    out.println("Current players in the playroom: " + String.join(", ", playRoom));
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                in.close();
+                out.close();
+                clientSocket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void sendMessage(String message) {
+        out.println(message);
+    }
+
+    public String getPlayerName() {
+        return playerName;
+    }
+}
